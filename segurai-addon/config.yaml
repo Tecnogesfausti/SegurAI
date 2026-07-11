@@ -1,0 +1,46 @@
+name: SegurAI
+slug: segurai
+version: 0.1.0
+description: Agente local 24/7 con Home Assistant MCP, OpenRouter, memoria y panel web.
+url: https://github.com/Tecnogesfausti/SegurAI
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: services
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:shield-home
+panel_title: SegurAI
+homeassistant_api: true
+hassio_api: true
+host_network: false
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: Panel web de SegurAI
+map:
+  - addon_config:rw
+  - share:rw
+options:
+  openrouter_api_key: ""
+  model_routes: model_routes.yaml
+  poll_seconds: 300
+  sensor_prompt: Consulta sensores de presencia, puertas, ventanas, movimiento, alarma y cámaras si existen.
+  fs_roots: /config,/share
+  no_sensor_loop: false
+  allow_actions_without_confirmation: false
+  web_only: true
+schema:
+  openrouter_api_key: password
+  model_routes: str
+  poll_seconds: int(30,86400)
+  sensor_prompt: str
+  fs_roots: str
+  no_sensor_loop: bool
+  allow_actions_without_confirmation: bool
+  web_only: bool
