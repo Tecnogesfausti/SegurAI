@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.sqlite3-*
+*.log
+*.tar.gz
+.env
+
+# Runtime local
+.segurai_history
+mareo.txt
+temps.hoy

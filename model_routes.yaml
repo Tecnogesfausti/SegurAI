@@ -1,0 +1,57 @@
+default: openai/gpt-4.1-nano
+
+fallbacks:
+  - google/gemini-2.5-flash-lite
+  - openrouter/free
+
+priorities:
+  cost:
+    max_input_price_per_million: 0.15
+    max_output_price_per_million: 0.60
+  speed:
+    prefer:
+      - google/gemini-2.5-flash-lite
+      - openai/gpt-4.1-nano
+  quality:
+    prefer:
+      - openai/gpt-4.1-nano
+      - google/gemini-2.5-flash-lite
+
+routes:
+  chat:
+    model: openai/gpt-4.1-nano
+    reason: Conversacion general barata y estable.
+
+  homeassistant:
+    model: openai/gpt-4.1-nano
+    requires_tools: true
+    reason: Buen seguimiento de herramientas para Home Assistant con coste bajo.
+
+  scheduled_task:
+    model: openai/gpt-4.1-nano
+    requires_tools: true
+    reason: Tareas programadas necesitan fiabilidad con tools.
+
+  memory_extraction:
+    model: google/gemini-2.5-flash-lite
+    reason: Extraccion/sintesis barata.
+
+  summary:
+    model: google/gemini-2.5-flash-lite
+    reason: Resumen barato.
+
+  classification:
+    model: google/gemini-2.5-flash-lite
+    reason: Clasificacion barata.
+
+  translation:
+    model: qwen/qwen3-32b
+    reason: Buen multilingue economico.
+
+  programming:
+    model: openai/gpt-4.1-nano
+    reason: Programacion ligera economica.
+
+  reasoning:
+    model: openai/gpt-4.1-nano
+    reason: Razonamiento moderado con coste controlado.
