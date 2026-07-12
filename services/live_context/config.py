@@ -23,7 +23,26 @@ class LiveContextConfig:
     open_meteo_enabled: bool = os.getenv("OPEN_METEO_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     dgt_traffic_enabled: bool = os.getenv("DGT_TRAFFIC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
     dgt_traffic_url: str = os.getenv("DGT_TRAFFIC_URL", "")
+    open_meteo_air_quality_enabled: bool = os.getenv("OPEN_METEO_AIR_QUALITY_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+
+    @property
+    def air_quality_locations(self) -> list[LocationConfig]:
+        default = "Torrent|39.4371|-0.4655;Valencia|39.4699|-0.3763"
+        return parse_air_quality_locations(os.getenv("AIR_QUALITY_LOCATIONS", default), self.location)
 
     @classmethod
     def from_env(cls) -> "LiveContextConfig":
         return cls()
+
+
+def parse_air_quality_locations(value: str, fallback: LocationConfig) -> list[LocationConfig]:
+    rows: list[LocationConfig] = []
+    for item in value.split(';'):
+        parts = [part.strip() for part in item.split('|')]
+        if len(parts) != 3 or not all(parts):
+            continue
+        try:
+            rows.append(LocationConfig(parts[0], float(parts[1]), float(parts[2]), fallback.radius_km, fallback.timezone))
+        except ValueError:
+            continue
+    return rows or [fallback]

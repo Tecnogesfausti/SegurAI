@@ -10,6 +10,7 @@ from services.live_context.config import LiveContextConfig
 from services.live_context.providers.base import LiveContextProvider
 from services.live_context.providers.weather_open_meteo import OpenMeteoWeatherProvider
 from services.live_context.providers.traffic_dgt import DGTTrafficProvider
+from services.live_context.providers.air_quality_open_meteo import OpenMeteoAirQualityProvider
 
 
 class LiveContextManager:
@@ -29,6 +30,8 @@ class LiveContextManager:
             self.register(OpenMeteoWeatherProvider())
         if self.config.dgt_traffic_enabled:
             self.register(DGTTrafficProvider())
+        if self.config.open_meteo_air_quality_enabled:
+            self.register(OpenMeteoAirQualityProvider())
 
     def register(self, provider: LiveContextProvider) -> None:
         self.providers[provider.domain] = provider
@@ -68,6 +71,7 @@ class LiveContextManager:
             "providers": sorted(self.providers),
             "open_meteo_enabled": self.config.open_meteo_enabled,
             "dgt_traffic_enabled": self.config.dgt_traffic_enabled,
+            "open_meteo_air_quality_enabled": self.config.open_meteo_air_quality_enabled,
         }
 
     async def _get_domain(self, domain: str, warnings: list[str]) -> tuple[str, dict[str, Any] | None]:

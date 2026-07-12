@@ -339,6 +339,20 @@ MONITOR_TRAFICO_MIN_SEVERITY="info"
 
 El agente solo recomienda revisar ruta alternativa; no inicia navegacion ni modifica calendario.
 
+
+### Monitor de calidad del aire
+
+`monitor_calidad_aire` consulta Open-Meteo Air Quality para varios puntos. Por defecto compara Torrent y Valencia ciudad, manteniendo cada lectura separada para no presentar Valencia como si fuera Torrent.
+
+```bash
+OPEN_METEO_AIR_QUALITY_ENABLED="true"
+AIR_QUALITY_LOCATIONS="Torrent|39.4371|-0.4655;Valencia|39.4699|-0.3763"
+MONITOR_CALIDAD_AIRE_MAX_EXERCISE_AQI="60"
+MONITOR_CALIDAD_AIRE_MAX_VENTILATION_AQI="80"
+```
+
+El agente diferencia prediccion/modelo de medicion observada y solo recomienda prudencia; no ejecuta acciones fisicas.
+
 ## Live Context Manager
 
 SegurAI incluye una primera vertical de `LiveContextManager` en `services/live_context/`.
