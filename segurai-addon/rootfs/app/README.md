@@ -296,6 +296,22 @@ En Home Assistant:
 
 La primera versión del add-on arranca por defecto en modo `web_only`, mostrando panel visual, memoria, tareas, herramientas y logs. Para arrancar el agente de terminal dentro del contenedor, cambia `web_only` a `false`.
 
+
+### Monitor de temperatura
+
+`monitor_temperatura` lee sensores de temperatura de Home Assistant por REST, usando `HA_TOKEN` y la URL configurada. Por defecto detecta sensores con `device_class=temperature` o unidad de temperatura. Puedes restringirlo con patrones:
+
+```bash
+MONITOR_TEMPERATURA_ENTITIES="sensor.salon_*,sensor.huerto_temperatura"
+MONITOR_TEMPERATURA_MIN_C="5"
+MONITOR_TEMPERATURA_MAX_C="35"
+MONITOR_TEMPERATURA_STALE_MINUTES="60"
+MONITOR_TEMPERATURA_RAPID_DELTA_C="4"
+MONITOR_TEMPERATURA_RAPID_WINDOW_MINUTES="30"
+```
+
+El agente solo avisa y guarda observaciones; no acciona climatizacion sin confirmacion.
+
 ## Live Context Manager
 
 SegurAI incluye una primera vertical de `LiveContextManager` en `services/live_context/`.
