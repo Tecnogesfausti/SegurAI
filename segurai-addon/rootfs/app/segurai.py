@@ -38,6 +38,7 @@ from zoneinfo import ZoneInfo
 
 from agents.manager import AgentManager
 from tools.registry import builtin_tool_names, builtin_tool_schemas, call_builtin_tool as call_indexed_builtin_tool
+from services.live_context.manager import LiveContextManager
 
 try:
     import readline
@@ -1935,6 +1936,7 @@ async def run_agent_session(
     config: RuntimeConfig,
     stop: asyncio.Event,
     router: ModelRouter,
+    live_context: LiveContextManager,
 ) -> None:
     await session.initialize()
     listed = await session.list_tools()
@@ -1957,6 +1959,7 @@ async def run_agent_session(
             "memory": memory,
             "router": router,
             "mcp_session": session,
+            "live_context": live_context,
         },
         event_logger=runtime_log,
     )
@@ -2032,6 +2035,7 @@ async def main() -> int:
     model_catalog = await fetch_openrouter_model_catalog()
     router = ModelRouter(config.model_routes_path, model_catalog)
     memory = MemoryStore(config.db_path)
+    live_context = LiveContextManager()
     stop = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -2054,6 +2058,7 @@ async def main() -> int:
                         config=config,
                         stop=stop,
                         router=router,
+                        live_context=live_context,
                     )
         else:
             server_params = StdioServerParameters(
@@ -2070,6 +2075,7 @@ async def main() -> int:
                         config=config,
                         stop=stop,
                         router=router,
+                        live_context=live_context,
                     )
     except Exception as exc:  # noqa: BLE001
         print(f"No se pudo conectar o mantener la sesión MCP: {exception_summary(exc)}", file=sys.stderr)

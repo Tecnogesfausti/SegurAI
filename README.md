@@ -295,3 +295,37 @@ En Home Assistant:
 6. Arranca el add-on y abre el panel web desde Ingress.
 
 La primera versión del add-on arranca por defecto en modo `web_only`, mostrando panel visual, memoria, tareas, herramientas y logs. Para arrancar el agente de terminal dentro del contenedor, cambia `web_only` a `false`.
+
+## Live Context Manager
+
+SegurAI incluye una primera vertical de `LiveContextManager` en `services/live_context/`.
+
+Estado actual:
+
+- ubicación por defecto: Torrent, Valencia, España
+- proveedor implementado: Open-Meteo Forecast API
+- agente implementado: `monitor_clima_exterior`
+- caché en memoria con TTL
+- timeout y reintentos por cliente HTTP
+- fallback a datos stale si falla una fuente tras haber tenido datos válidos
+- tests sin Internet con `httpx.MockTransport`
+
+Variables principales:
+
+```bash
+LIVE_CONTEXT_LOCATION="Torrent, Valencia, España"
+LIVE_CONTEXT_LAT="39.4371"
+LIVE_CONTEXT_LON="-0.4655"
+LIVE_CONTEXT_RADIUS_KM="20"
+LIVE_CONTEXT_TIMEZONE="Europe/Madrid"
+OPEN_METEO_ENABLED="true"
+LIVE_CONTEXT_HTTP_TIMEOUT_SECONDS="15"
+LIVE_CONTEXT_MAX_RETRIES="2"
+```
+
+Prueba manual dentro de SegurAI:
+
+```text
+/agentes
+/agente run monitor_clima_exterior
+```
