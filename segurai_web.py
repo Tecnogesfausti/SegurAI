@@ -537,7 +537,7 @@ async function loadAll() {
   document.getElementById('calls').textContent = status.usage.calls;
   document.getElementById('cost').textContent = '$' + Number(status.usage.cost || 0).toFixed(5);
   document.getElementById('status').textContent = JSON.stringify(status, null, 2);
-  document.getElementById('logs').textContent = logs.lines.join('\n') || 'Sin logs todavia.';
+  document.getElementById('logs').textContent = logs.lines.join('\\n') || 'Sin logs todavia.';
   document.getElementById('tools').innerHTML = tools.tools.map(t => `<span class="pill">${html(t)}</span>`).join('');
   renderTasks(tasks);
   renderAgents(agents.agents || []);
