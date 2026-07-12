@@ -325,6 +325,20 @@ MONITOR_DISPOSITIVOS_VERY_STALE_MINUTES="720"
 MONITOR_DISPOSITIVOS_LOW_BATTERY_PERCENT="20"
 ```
 
+
+### Monitor de trafico
+
+`monitor_trafico` usa `live_context` y el proveedor `traffic_dgt` para vigilar incidencias cercanas a Torrent. Por defecto prioriza la A-7, que queda como primera carretera vigilada. No inventa datos: si no hay fuente DGT configurada, avisa de que falta `DGT_TRAFFIC_URL`.
+
+```bash
+DGT_TRAFFIC_ENABLED="true"
+DGT_TRAFFIC_URL="https://.../fuente-dgt-o-datex.json"
+MONITOR_TRAFICO_ROADS="A-7,AP-7,V-30,CV-36,CV-33,N-340"
+MONITOR_TRAFICO_MIN_SEVERITY="info"
+```
+
+El agente solo recomienda revisar ruta alternativa; no inicia navegacion ni modifica calendario.
+
 ## Live Context Manager
 
 SegurAI incluye una primera vertical de `LiveContextManager` en `services/live_context/`.

@@ -21,6 +21,8 @@ class LiveContextConfig:
     max_retries: int = int(os.getenv("LIVE_CONTEXT_MAX_RETRIES", "2"))
     max_concurrency: int = int(os.getenv("LIVE_CONTEXT_MAX_CONCURRENCY", "4"))
     open_meteo_enabled: bool = os.getenv("OPEN_METEO_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    dgt_traffic_enabled: bool = os.getenv("DGT_TRAFFIC_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+    dgt_traffic_url: str = os.getenv("DGT_TRAFFIC_URL", "")
 
     @classmethod
     def from_env(cls) -> "LiveContextConfig":

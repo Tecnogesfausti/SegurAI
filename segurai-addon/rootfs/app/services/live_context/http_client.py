@@ -29,3 +29,22 @@ class LiveContextHTTPClient:
                     await asyncio.sleep(0.2 * (attempt + 1))
         assert last_error is not None
         raise last_error
+
+
+    async def get_text(self, url: str, *, params: dict[str, Any] | None = None) -> str:
+        last_error: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                if self._client is not None:
+                    response = await self._client.get(url, params=params)
+                else:
+                    async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                        response = await client.get(url, params=params)
+                response.raise_for_status()
+                return response.text
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+        assert last_error is not None
+        raise last_error

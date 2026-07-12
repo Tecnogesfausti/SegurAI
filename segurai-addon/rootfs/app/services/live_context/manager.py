@@ -9,6 +9,7 @@ from services.live_context.cache import TTLCache
 from services.live_context.config import LiveContextConfig
 from services.live_context.providers.base import LiveContextProvider
 from services.live_context.providers.weather_open_meteo import OpenMeteoWeatherProvider
+from services.live_context.providers.traffic_dgt import DGTTrafficProvider
 
 
 class LiveContextManager:
@@ -26,6 +27,8 @@ class LiveContextManager:
     def _register_default_providers(self) -> None:
         if self.config.open_meteo_enabled:
             self.register(OpenMeteoWeatherProvider())
+        if self.config.dgt_traffic_enabled:
+            self.register(DGTTrafficProvider())
 
     def register(self, provider: LiveContextProvider) -> None:
         self.providers[provider.domain] = provider
@@ -64,6 +67,7 @@ class LiveContextManager:
             "location": self.config.location.as_dict(),
             "providers": sorted(self.providers),
             "open_meteo_enabled": self.config.open_meteo_enabled,
+            "dgt_traffic_enabled": self.config.dgt_traffic_enabled,
         }
 
     async def _get_domain(self, domain: str, warnings: list[str]) -> tuple[str, dict[str, Any] | None]:
