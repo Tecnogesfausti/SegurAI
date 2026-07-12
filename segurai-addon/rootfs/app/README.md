@@ -353,6 +353,25 @@ MONITOR_CALIDAD_AIRE_MAX_VENTILATION_AQI="80"
 
 El agente diferencia prediccion/modelo de medicion observada y solo recomienda prudencia; no ejecuta acciones fisicas.
 
+
+### Panel web operativo
+
+La UI web permite gestionar SegurAI desde el navegador:
+
+- crear tareas con fecha/hora, prioridad e intervalo informativo;
+- ejecutar, cancelar o eliminar tareas;
+- listar agentes, ejecutar un agente manualmente y ajustar prioridad/intervalo efectivo;
+- guardar configuracion de agentes en `SEGURAI_AGENT_CONFIG`;
+- ver observaciones, resultados, herramientas y logs.
+
+Variables utiles:
+
+```bash
+SEGURAI_DB=/config/data/segurai_memory.sqlite3
+SEGURAI_AGENT_CONFIG=/config/data/agent_config.json
+SEGURAI_AGENTS_DIR=agents
+```
+
 ## Live Context Manager
 
 SegurAI incluye una primera vertical de `LiveContextManager` en `services/live_context/`.

@@ -1,30 +1,137 @@
 from __future__ import annotations
 
+import asyncio
+import dataclasses
+import datetime as dt
 import json
 import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
+from agents.manager import AgentManager
+from services.live_context.manager import LiveContextManager
 from tools.registry import builtin_tool_names
+
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover
+    httpx = None  # type: ignore[assignment]
 
 APP_NAME = "SegurAI"
 DB_PATH = Path(os.getenv("SEGURAI_DB", "/config/data/segurai_memory.sqlite3"))
 LOG_PATH = Path(os.getenv("SEGURAI_LOG_FILE", "/config/data/segurai_runtime.log"))
+AGENTS_DIR = Path(os.getenv("SEGURAI_AGENTS_DIR", "agents"))
+AGENT_CONFIG_PATH = Path(os.getenv("SEGURAI_AGENT_CONFIG", "/config/data/agent_config.json"))
 
-app = FastAPI(title="SegurAI", version="0.1.0")
+app = FastAPI(title="SegurAI", version="0.2.0")
+
+
+def utc_now() -> str:
+    return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+
+
+def parse_run_at(value: str | None) -> str:
+    if not value:
+        return utc_now()
+    text = value.strip()
+    if not text:
+        return utc_now()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="run_at debe ser ISO 8601") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC).isoformat(timespec="seconds")
+
+
+def connect_db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    ensure_schema(conn)
+    return conn
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            content TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.7,
+            source TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            raw TEXT
+        );
+        CREATE TABLE IF NOT EXISTS usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_tokens INTEGER,
+            completion_tokens INTEGER,
+            total_tokens INTEGER,
+            estimated_cost_usd REAL,
+            context TEXT,
+            provider TEXT,
+            duration_ms INTEGER,
+            router_reason TEXT
+        );
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            run_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT NOT NULL,
+            instruction TEXT NOT NULL,
+            result TEXT,
+            last_error TEXT
+        );
+        """
+    )
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+    additions = {
+        "priority": "INTEGER NOT NULL DEFAULT 50",
+        "interval_seconds": "INTEGER",
+    }
+    for column, definition in additions.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+    conn.commit()
 
 
 def sqlite_rows(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     if not DB_PATH.exists():
         return []
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = connect_db()
     try:
         return [dict(row) for row in conn.execute(query, params)]
+    finally:
+        conn.close()
+
+
+def execute_db(query: str, params: tuple[Any, ...] = ()) -> int:
+    conn = connect_db()
+    try:
+        cursor = conn.execute(query, params)
+        conn.commit()
+        return int(cursor.lastrowid or cursor.rowcount)
     finally:
         conn.close()
 
@@ -47,6 +154,75 @@ def tail_log(limit: int = 80) -> list[str]:
     return LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
 
 
+def read_agent_config() -> dict[str, Any]:
+    if not AGENT_CONFIG_PATH.exists():
+        return {"agents": {}}
+    try:
+        data = json.loads(AGENT_CONFIG_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"agents": {}}
+    if not isinstance(data, dict):
+        return {"agents": {}}
+    data.setdefault("agents", {})
+    return data
+
+
+def write_agent_config(data: dict[str, Any]) -> None:
+    AGENT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+class WebMemory:
+    def add_observation(self, *, source: str, summary: str, raw: str | None = None) -> None:
+        execute_db(
+            "INSERT INTO observations(created_at, source, summary, raw) VALUES (?, ?, ?, ?)",
+            (utc_now(), source[:80], summary.strip(), raw),
+        )
+
+
+@dataclasses.dataclass
+class WebSegurAIContext:
+    ha_base_url: str | None
+    ha_token: str | None
+    httpx: Any
+    require_action_confirmation: bool = True
+
+    @property
+    def has_homeassistant_rest(self) -> bool:
+        return bool(self.ha_base_url and self.ha_token and self.httpx is not None)
+
+
+def build_agent_manager() -> AgentManager:
+    manager = AgentManager(
+        AGENTS_DIR,
+        context_services={
+            "memory": WebMemory(),
+            "live_context": LiveContextManager(),
+            "segurai": WebSegurAIContext(
+                ha_base_url=os.getenv("HOME_ASSISTANT_URL") or os.getenv("HA_BASE_URL"),
+                ha_token=os.getenv("HOME_ASSISTANT_TOKEN") or os.getenv("HA_TOKEN"),
+                httpx=httpx,
+            ),
+        },
+    )
+    manager.discover()
+    return manager
+
+
+def agent_rows() -> list[dict[str, Any]]:
+    manager = build_agent_manager()
+    config = read_agent_config().get("agents", {})
+    rows = []
+    for row in manager.list_agents():
+        overrides = config.get(row["name"], {}) if isinstance(config, dict) else {}
+        row["enabled"] = bool(overrides.get("enabled", False))
+        row["effective_priority"] = int(overrides.get("priority", row["priority"]))
+        row["effective_frequency_seconds"] = int(overrides.get("frequency_seconds", row["frequency_seconds"]))
+        row["overrides"] = overrides
+        rows.append(row)
+    return sorted(rows, key=lambda item: (-int(item["effective_priority"]), item["name"]))
+
+
 @app.get("/api/status")
 def api_status() -> dict[str, Any]:
     tasks = sqlite_rows("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status")
@@ -59,11 +235,12 @@ def api_status() -> dict[str, Any]:
         "db_exists": DB_PATH.exists(),
         "log_path": str(LOG_PATH),
         "log_exists": LOG_PATH.exists(),
+        "agent_config_path": str(AGENT_CONFIG_PATH),
         "tasks": tasks,
         "memories": memories[0]["count"] if memories else 0,
         "observations": observations[0]["count"] if observations else 0,
         "usage": usage,
-        "tools": builtin_tool_names(include_homeassistant=bool(os.getenv("HA_TOKEN"))),
+        "tools": builtin_tool_names(include_homeassistant=bool(os.getenv("HA_TOKEN") or os.getenv("HOME_ASSISTANT_TOKEN"))),
     }
 
 
@@ -80,17 +257,147 @@ def api_memories(limit: int = 20) -> list[dict[str, Any]]:
     )
 
 
-@app.get("/api/tasks")
-def api_tasks(limit: int = 30) -> list[dict[str, Any]]:
+@app.get("/api/observations")
+def api_observations(limit: int = 30) -> list[dict[str, Any]]:
     return sqlite_rows(
         """
-        SELECT id, run_at, status, title, instruction, result, last_error
-        FROM tasks
-        ORDER BY run_at ASC, id ASC
+        SELECT id, created_at, source, summary, raw
+        FROM observations
+        ORDER BY created_at DESC, id DESC
         LIMIT ?
         """,
         (max(1, min(limit, 100)),),
     )
+
+
+@app.get("/api/tasks")
+def api_tasks(limit: int = 50, include_done: bool = True) -> list[dict[str, Any]]:
+    where = "" if include_done else "WHERE status IN ('pending', 'running', 'failed')"
+    return sqlite_rows(
+        f"""
+        SELECT id, created_at, updated_at, run_at, status, title, instruction,
+               result, last_error, priority, interval_seconds
+        FROM tasks
+        {where}
+        ORDER BY run_at ASC, id ASC
+        LIMIT ?
+        """,
+        (max(1, min(limit, 200)),),
+    )
+
+
+@app.post("/api/tasks")
+def api_create_task(payload: dict[str, Any]) -> dict[str, Any]:
+    title = str(payload.get("title") or "").strip()
+    instruction = str(payload.get("instruction") or "").strip()
+    if not title or not instruction:
+        raise HTTPException(status_code=400, detail="title e instruction son obligatorios")
+    run_at = parse_run_at(str(payload.get("run_at") or "") or None)
+    priority = int(payload.get("priority", 50) or 50)
+    interval = payload.get("interval_seconds")
+    interval_seconds = int(interval) if interval not in (None, "") else None
+    now = utc_now()
+    task_id = execute_db(
+        """
+        INSERT INTO tasks(created_at, updated_at, run_at, status, title, instruction, priority, interval_seconds)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+        """,
+        (now, now, run_at, title[:160], instruction, priority, interval_seconds),
+    )
+    return {"ok": True, "id": task_id}
+
+
+@app.patch("/api/tasks/{task_id}")
+def api_update_task(task_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "title": "title",
+        "instruction": "instruction",
+        "status": "status",
+        "priority": "priority",
+        "interval_seconds": "interval_seconds",
+    }
+    fields: list[str] = ["updated_at = ?"]
+    values: list[Any] = [utc_now()]
+    if "run_at" in payload:
+        fields.append("run_at = ?")
+        values.append(parse_run_at(str(payload.get("run_at") or "") or None))
+    for key, column in allowed.items():
+        if key in payload:
+            value = payload[key]
+            if key == "interval_seconds" and value in (None, ""):
+                value = None
+            elif key in {"priority", "interval_seconds"} and value is not None:
+                value = int(value)
+            elif value is not None:
+                value = str(value)
+            fields.append(f"{column} = ?")
+            values.append(value)
+    values.append(task_id)
+    changed = execute_db(f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?", tuple(values))
+    if changed < 1:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return {"ok": True, "id": task_id}
+
+
+@app.post("/api/tasks/{task_id}/run")
+def api_run_task_now(task_id: int) -> dict[str, Any]:
+    changed = execute_db(
+        "UPDATE tasks SET updated_at = ?, run_at = ?, status = 'pending', last_error = NULL WHERE id = ?",
+        (utc_now(), utc_now(), task_id),
+    )
+    if changed < 1:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return {"ok": True, "id": task_id}
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+def api_cancel_task(task_id: int) -> dict[str, Any]:
+    changed = execute_db("UPDATE tasks SET updated_at = ?, status = 'cancelled' WHERE id = ?", (utc_now(), task_id))
+    if changed < 1:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return {"ok": True, "id": task_id}
+
+
+@app.delete("/api/tasks/{task_id}")
+def api_delete_task(task_id: int) -> dict[str, Any]:
+    changed = execute_db("DELETE FROM tasks WHERE id = ?", (task_id,))
+    if changed < 1:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return {"ok": True, "id": task_id}
+
+
+@app.get("/api/agents")
+def api_agents() -> dict[str, Any]:
+    manager = build_agent_manager()
+    return {"agents": agent_rows(), "load_errors": manager.load_errors}
+
+
+@app.patch("/api/agents/{name}")
+def api_update_agent(name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    known = {row["name"] for row in agent_rows()}
+    if name not in known:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    data = read_agent_config()
+    agents = data.setdefault("agents", {})
+    current = agents.setdefault(name, {})
+    for key in ("enabled", "priority", "frequency_seconds"):
+        if key in payload:
+            value = payload[key]
+            if key == "enabled":
+                current[key] = bool(value)
+            else:
+                current[key] = int(value)
+    write_agent_config(data)
+    return {"ok": True, "agent": name, "config": current}
+
+
+@app.post("/api/agents/{name}/run")
+async def api_run_agent(name: str) -> dict[str, Any]:
+    manager = build_agent_manager()
+    if name not in manager.agents:
+        raise HTTPException(status_code=404, detail="Agente no encontrado")
+    result = await manager.run_once(name)
+    return {"ok": result.ok, "message": result.message, "data": result.data}
 
 
 @app.get("/api/logs")
@@ -100,7 +407,7 @@ def api_logs(limit: int = 80) -> dict[str, Any]:
 
 @app.get("/api/tools")
 def api_tools() -> dict[str, Any]:
-    return {"tools": builtin_tool_names(include_homeassistant=bool(os.getenv("HA_TOKEN")))}
+    return {"tools": builtin_tool_names(include_homeassistant=bool(os.getenv("HA_TOKEN") or os.getenv("HOME_ASSISTANT_TOKEN")))}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -118,50 +425,46 @@ def index() -> str:
       --ink: #17211f;
       --muted: #63716d;
       --line: #d7dfda;
-      --panel: rgba(255,255,255,.86);
+      --panel: rgba(255,255,255,.9);
       --brand: #0f766e;
-      --accent: #d97706;
+      --danger: #b91c1c;
+      --warn: #b45309;
       --wash: #eef7f1;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 12% 8%, rgba(15,118,110,.18), transparent 28rem),
-        radial-gradient(circle at 90% 12%, rgba(217,119,6,.16), transparent 24rem),
-        linear-gradient(135deg, #f7fbf8 0%, #edf5f2 52%, #f9f4e8 100%);
-      min-height: 100vh;
-    }
-    main { max-width: 1180px; margin: 0 auto; padding: 32px 18px 48px; }
-    header { display: flex; justify-content: space-between; gap: 18px; align-items: end; margin-bottom: 22px; }
-    h1 { font-size: clamp(2.4rem, 7vw, 5.6rem); line-height: .88; margin: 0; letter-spacing: 0; }
-    h2 { font-size: 1rem; margin: 0 0 12px; font-family: ui-sans-serif, system-ui, sans-serif; }
-    p { color: var(--muted); margin: 8px 0 0; }
-    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
-    section, .stat {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
-      box-shadow: 0 18px 44px rgba(25, 45, 38, .08);
-      backdrop-filter: blur(12px);
-    }
-    .stat { grid-column: span 3; min-height: 118px; }
-    .stat strong { display: block; font: 700 2.1rem/1 ui-sans-serif, system-ui, sans-serif; }
-    .wide { grid-column: span 8; }
-    .side { grid-column: span 4; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: linear-gradient(135deg, #f7fbf8 0%, #edf5f2 52%, #f9f4e8 100%); min-height: 100vh; }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 44px; }
+    header { display: flex; justify-content: space-between; gap: 18px; align-items: end; margin-bottom: 18px; }
+    h1 { font-size: clamp(2rem, 5vw, 4rem); line-height: .95; margin: 0; letter-spacing: 0; }
+    h2 { font-size: 1rem; margin: 0 0 12px; }
+    h3 { font-size: .95rem; margin: 14px 0 8px; }
+    p { color: var(--muted); margin: 6px 0 0; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+    section, .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; box-shadow: 0 12px 34px rgba(25, 45, 38, .08); }
+    .stat { grid-column: span 3; min-height: 98px; }
+    .stat strong { display: block; font-size: 1.8rem; line-height: 1; }
+    .wide { grid-column: span 7; }
+    .side { grid-column: span 5; }
     .full { grid-column: 1 / -1; }
-    ul { margin: 0; padding: 0; list-style: none; }
-    li { padding: 9px 0; border-top: 1px solid var(--line); }
-    li:first-child { border-top: 0; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    label { display: grid; gap: 4px; color: var(--muted); font-size: .78rem; }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: white; color: var(--ink); }
+    textarea { min-height: 72px; resize: vertical; }
+    button { border: 0; background: var(--ink); color: white; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+    button.secondary { background: var(--brand); }
+    button.warning { background: var(--warn); }
+    button.danger { background: var(--danger); }
+    button.ghost { color: var(--ink); background: white; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { text-align: left; border-top: 1px solid var(--line); padding: 8px; vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
     code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     pre { white-space: pre-wrap; margin: 0; max-height: 320px; overflow: auto; color: #263631; }
-    .pill { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; margin: 3px; background: rgba(255,255,255,.6); }
-    .ok { color: var(--brand); }
-    button { border: 0; background: var(--ink); color: white; border-radius: 7px; padding: 10px 14px; cursor: pointer; }
-    @media (max-width: 820px) { .stat, .wide, .side { grid-column: 1 / -1; } header { display: block; } }
+    .pill { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; margin: 2px; background: rgba(255,255,255,.7); }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+    .muted { color: var(--muted); }
+    .split { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    @media (max-width: 900px) { .stat, .wide, .side { grid-column: 1 / -1; } header { display: block; } .split { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -169,9 +472,9 @@ def index() -> str:
     <header>
       <div>
         <h1>SegurAI</h1>
-        <p>Agente local para Home Assistant, memoria y decisiones vigiladas.</p>
+        <p>Agentes, tareas, memoria y resultados desde la web.</p>
       </div>
-      <button onclick="loadAll()">Actualizar</button>
+      <div class="toolbar"><button onclick="loadAll()">Actualizar</button></div>
     </header>
 
     <div class="grid">
@@ -180,19 +483,43 @@ def index() -> str:
       <div class="stat"><p>Llamadas LLM</p><strong id="calls">-</strong></div>
       <div class="stat"><p>Coste estimado</p><strong id="cost">-</strong></div>
 
-      <section class="wide"><h2>Tareas</h2><ul id="tasks"></ul></section>
+      <section class="full">
+        <h2>Agentes</h2>
+        <table><thead><tr><th>Agente</th><th>Estado</th><th>Intervalo</th><th>Prioridad</th><th>Ultimo resultado</th><th></th></tr></thead><tbody id="agents"></tbody></table>
+      </section>
+
+      <section class="wide">
+        <h2>Tareas</h2>
+        <div class="split">
+          <label>Titulo<input id="taskTitle" placeholder="Revision de sensores" /></label>
+          <label>Fecha/hora<input id="taskRunAt" type="datetime-local" /></label>
+          <label>Prioridad<input id="taskPriority" type="number" min="1" max="100" value="50" /></label>
+          <label>Intervalo segundos<input id="taskInterval" type="number" min="0" placeholder="opcional" /></label>
+        </div>
+        <label>Instruccion<textarea id="taskInstruction" placeholder="Que debe hacer SegurAI"></textarea></label>
+        <div class="toolbar"><button class="secondary" onclick="createTask()">Crear tarea</button></div>
+        <table><thead><tr><th>ID</th><th>Estado</th><th>Plan</th><th>Resultado</th><th></th></tr></thead><tbody id="tasks"></tbody></table>
+      </section>
+
       <section class="side"><h2>Herramientas</h2><div id="tools"></div></section>
-      <section class="wide"><h2>Memoria reciente</h2><ul id="memory"></ul></section>
+      <section class="wide"><h2>Observaciones recientes</h2><ul id="observationList"></ul></section>
       <section class="side"><h2>Estado</h2><pre id="status"></pre></section>
       <section class="full"><h2>Logs</h2><pre id="logs"></pre></section>
     </div>
   </main>
 <script>
-async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(url); return r.json(); }
+async function requestJSON(url, options = {}) {
+  const r = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...options});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || url);
+  return data;
+}
 function text(v) { return v === null || v === undefined || v === '' ? '-' : String(v); }
+function html(v) { return text(v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function isoFromLocal(value) { return value ? new Date(value).toISOString() : null; }
 async function loadAll() {
-  const [status, memories, tasks, logs, tools] = await Promise.all([
-    getJSON('/api/status'), getJSON('/api/memories'), getJSON('/api/tasks'), getJSON('/api/logs'), getJSON('/api/tools')
+  const [status, observations, tasks, logs, tools, agents] = await Promise.all([
+    requestJSON('/api/status'), requestJSON('/api/observations'), requestJSON('/api/tasks'), requestJSON('/api/logs'), requestJSON('/api/tools'), requestJSON('/api/agents')
   ]);
   document.getElementById('memories').textContent = status.memories;
   document.getElementById('observations').textContent = status.observations;
@@ -200,11 +527,50 @@ async function loadAll() {
   document.getElementById('cost').textContent = '$' + Number(status.usage.cost || 0).toFixed(5);
   document.getElementById('status').textContent = JSON.stringify(status, null, 2);
   document.getElementById('logs').textContent = logs.lines.join('\n') || 'Sin logs todavia.';
-  document.getElementById('tools').innerHTML = tools.tools.map(t => `<span class="pill">${t}</span>`).join('');
-  document.getElementById('tasks').innerHTML = tasks.length ? tasks.map(t => `<li><strong>#${t.id} ${t.status}</strong><br>${text(t.title)}<br><span class="mono">${text(t.run_at)}</span></li>`).join('') : '<li>Sin tareas.</li>';
-  document.getElementById('memory').innerHTML = memories.length ? memories.map(m => `<li><strong>${text(m.topic)}</strong><br>${text(m.content)}</li>`).join('') : '<li>Sin memoria todavia.</li>';
+  document.getElementById('tools').innerHTML = tools.tools.map(t => `<span class="pill">${html(t)}</span>`).join('');
+  renderTasks(tasks);
+  renderAgents(agents.agents || []);
+  document.getElementById('observationList').innerHTML = observations.length ? observations.map(o => `<li><strong>${html(o.source)}</strong> <span class="muted">${html(o.created_at)}</span><br>${html(o.summary)}</li>`).join('') : '<li>Sin observaciones todavia.</li>';
 }
-loadAll().catch(err => { document.body.insertAdjacentHTML('beforeend', '<pre>' + err.message + '</pre>'); });
+function renderAgents(rows) {
+  document.getElementById('agents').innerHTML = rows.length ? rows.map(a => `
+    <tr>
+      <td><strong>${html(a.name)}</strong><br><span class="muted">${html(a.description)}</span></td>
+      <td><label><input type="checkbox" ${a.enabled ? 'checked' : ''} onchange="updateAgent('${html(a.name)}', {enabled: this.checked})" /> activo</label></td>
+      <td><input type="number" value="${a.effective_frequency_seconds}" min="1" onchange="updateAgent('${html(a.name)}', {frequency_seconds: this.value})" /></td>
+      <td><input type="number" value="${a.effective_priority}" min="1" max="100" onchange="updateAgent('${html(a.name)}', {priority: this.value})" /></td>
+      <td class="muted">${html(a.stats?.last_message || '-')}</td>
+      <td><button class="secondary" onclick="runAgent('${html(a.name)}')">Ejecutar</button></td>
+    </tr>`).join('') : '<tr><td colspan="6">Sin agentes.</td></tr>';
+}
+function renderTasks(rows) {
+  document.getElementById('tasks').innerHTML = rows.length ? rows.map(t => `
+    <tr>
+      <td>#${t.id}<br><span class="muted">prio ${html(t.priority)}</span></td>
+      <td>${html(t.status)}</td>
+      <td><strong>${html(t.title)}</strong><br><span class="mono">${html(t.run_at)}</span><br>${html(t.instruction)}<br><span class="muted">intervalo: ${html(t.interval_seconds)}</span></td>
+      <td>${html(t.result || t.last_error || '-')}</td>
+      <td><div class="row-actions"><button class="secondary" onclick="runTask(${t.id})">Ejecutar</button><button class="warning" onclick="cancelTask(${t.id})">Cancelar</button><button class="danger" onclick="deleteTask(${t.id})">Eliminar</button></div></td>
+    </tr>`).join('') : '<tr><td colspan="5">Sin tareas.</td></tr>';
+}
+async function createTask() {
+  await requestJSON('/api/tasks', {method: 'POST', body: JSON.stringify({
+    title: document.getElementById('taskTitle').value,
+    instruction: document.getElementById('taskInstruction').value,
+    run_at: isoFromLocal(document.getElementById('taskRunAt').value),
+    priority: document.getElementById('taskPriority').value,
+    interval_seconds: document.getElementById('taskInterval').value || null
+  })});
+  document.getElementById('taskTitle').value = '';
+  document.getElementById('taskInstruction').value = '';
+  await loadAll();
+}
+async function runTask(id) { await requestJSON(`/api/tasks/${id}/run`, {method: 'POST'}); await loadAll(); }
+async function cancelTask(id) { await requestJSON(`/api/tasks/${id}/cancel`, {method: 'POST'}); await loadAll(); }
+async function deleteTask(id) { if (confirm('Eliminar tarea #' + id + '?')) { await requestJSON(`/api/tasks/${id}`, {method: 'DELETE'}); await loadAll(); } }
+async function updateAgent(name, payload) { await requestJSON(`/api/agents/${encodeURIComponent(name)}`, {method: 'PATCH', body: JSON.stringify(payload)}); await loadAll(); }
+async function runAgent(name) { const result = await requestJSON(`/api/agents/${encodeURIComponent(name)}/run`, {method: 'POST'}); alert(result.message); await loadAll(); }
+loadAll().catch(err => { document.body.insertAdjacentHTML('beforeend', '<pre>' + html(err.message) + '</pre>'); });
 </script>
 </body>
 </html>
