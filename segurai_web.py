@@ -463,12 +463,16 @@ def index() -> str:
     .pill { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; margin: 2px; background: rgba(255,255,255,.7); }
     .row-actions { display: flex; flex-wrap: wrap; gap: 5px; }
     .muted { color: var(--muted); }
+    .notice { position: sticky; top: 8px; z-index: 5; display: none; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: white; }
+    .notice.error { display: block; border-color: #fecaca; color: var(--danger); }
+    .notice.ok { display: block; border-color: #99f6e4; color: var(--brand); }
     .split { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     @media (max-width: 900px) { .stat, .wide, .side { grid-column: 1 / -1; } header { display: block; } .split { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <main>
+    <div id="notice" class="notice"></div>
     <header>
       <div>
         <h1>SegurAI</h1>
@@ -516,6 +520,13 @@ async function requestJSON(url, options = {}) {
 }
 function text(v) { return v === null || v === undefined || v === '' ? '-' : String(v); }
 function html(v) { return text(v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function showNotice(message, kind = 'ok') {
+  const node = document.getElementById('notice');
+  node.textContent = message;
+  node.className = 'notice ' + kind;
+  window.clearTimeout(showNotice.timer);
+  showNotice.timer = window.setTimeout(() => { node.className = 'notice'; }, 6000);
+}
 function isoFromLocal(value) { return value ? new Date(value).toISOString() : null; }
 async function loadAll() {
   const [status, observations, tasks, logs, tools, agents] = await Promise.all([
@@ -554,23 +565,26 @@ function renderTasks(rows) {
     </tr>`).join('') : '<tr><td colspan="5">Sin tareas.</td></tr>';
 }
 async function createTask() {
-  await requestJSON('/api/tasks', {method: 'POST', body: JSON.stringify({
-    title: document.getElementById('taskTitle').value,
-    instruction: document.getElementById('taskInstruction').value,
-    run_at: isoFromLocal(document.getElementById('taskRunAt').value),
-    priority: document.getElementById('taskPriority').value,
-    interval_seconds: document.getElementById('taskInterval').value || null
-  })});
-  document.getElementById('taskTitle').value = '';
-  document.getElementById('taskInstruction').value = '';
-  await loadAll();
+  try {
+    await requestJSON('/api/tasks', {method: 'POST', body: JSON.stringify({
+      title: document.getElementById('taskTitle').value,
+      instruction: document.getElementById('taskInstruction').value,
+      run_at: isoFromLocal(document.getElementById('taskRunAt').value),
+      priority: document.getElementById('taskPriority').value,
+      interval_seconds: document.getElementById('taskInterval').value || null
+    })});
+    document.getElementById('taskTitle').value = '';
+    document.getElementById('taskInstruction').value = '';
+    showNotice('Tarea creada');
+    await loadAll();
+  } catch (err) { showNotice(err.message, 'error'); }
 }
-async function runTask(id) { await requestJSON(`/api/tasks/${id}/run`, {method: 'POST'}); await loadAll(); }
-async function cancelTask(id) { await requestJSON(`/api/tasks/${id}/cancel`, {method: 'POST'}); await loadAll(); }
-async function deleteTask(id) { if (confirm('Eliminar tarea #' + id + '?')) { await requestJSON(`/api/tasks/${id}`, {method: 'DELETE'}); await loadAll(); } }
-async function updateAgent(name, payload) { await requestJSON(`/api/agents/${encodeURIComponent(name)}`, {method: 'PATCH', body: JSON.stringify(payload)}); await loadAll(); }
-async function runAgent(name) { const result = await requestJSON(`/api/agents/${encodeURIComponent(name)}/run`, {method: 'POST'}); alert(result.message); await loadAll(); }
-loadAll().catch(err => { document.body.insertAdjacentHTML('beforeend', '<pre>' + html(err.message) + '</pre>'); });
+async function runTask(id) { try { await requestJSON(`/api/tasks/${id}/run`, {method: 'POST'}); showNotice('Tarea preparada para ejecutar'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+async function cancelTask(id) { try { await requestJSON(`/api/tasks/${id}/cancel`, {method: 'POST'}); showNotice('Tarea cancelada'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+async function deleteTask(id) { if (confirm('Eliminar tarea #' + id + '?')) { try { await requestJSON(`/api/tasks/${id}`, {method: 'DELETE'}); showNotice('Tarea eliminada'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } } }
+async function updateAgent(name, payload) { try { await requestJSON(`/api/agents/${encodeURIComponent(name)}`, {method: 'PATCH', body: JSON.stringify(payload)}); showNotice('Agente actualizado'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+async function runAgent(name) { try { const result = await requestJSON(`/api/agents/${encodeURIComponent(name)}/run`, {method: 'POST'}); showNotice(result.message, result.ok ? 'ok' : 'error'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+loadAll().catch(err => { showNotice(err.message, 'error'); });
 </script>
 </body>
 </html>
