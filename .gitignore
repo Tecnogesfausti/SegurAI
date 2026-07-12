@@ -11,3 +11,4 @@ __pycache__/
 .segurai_history
 mareo.txt
 temps.hoy
+data/

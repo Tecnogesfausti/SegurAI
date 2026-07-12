@@ -22,10 +22,19 @@ except ModuleNotFoundError:  # pragma: no cover
     httpx = None  # type: ignore[assignment]
 
 APP_NAME = "SegurAI"
-DB_PATH = Path(os.getenv("SEGURAI_DB", "/config/data/segurai_memory.sqlite3"))
-LOG_PATH = Path(os.getenv("SEGURAI_LOG_FILE", "/config/data/segurai_runtime.log"))
+
+
+def default_data_dir() -> Path:
+    if os.getenv("SUPERVISOR_TOKEN") or Path("/config").is_dir():
+        return Path("/config/data")
+    return Path(os.getenv("SEGURAI_DATA_DIR", "data"))
+
+
+DATA_DIR = default_data_dir()
+DB_PATH = Path(os.getenv("SEGURAI_DB", str(DATA_DIR / "segurai_memory.sqlite3")))
+LOG_PATH = Path(os.getenv("SEGURAI_LOG_FILE", str(DATA_DIR / "segurai_runtime.log")))
 AGENTS_DIR = Path(os.getenv("SEGURAI_AGENTS_DIR", "agents"))
-AGENT_CONFIG_PATH = Path(os.getenv("SEGURAI_AGENT_CONFIG", "/config/data/agent_config.json"))
+AGENT_CONFIG_PATH = Path(os.getenv("SEGURAI_AGENT_CONFIG", str(DATA_DIR / "agent_config.json")))
 
 app = FastAPI(title="SegurAI", version="0.2.0")
 
