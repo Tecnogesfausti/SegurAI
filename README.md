@@ -312,6 +312,19 @@ MONITOR_TEMPERATURA_RAPID_WINDOW_MINUTES="30"
 
 El agente solo avisa y guarda observaciones; no acciona climatizacion sin confirmacion.
 
+
+### Monitor de dispositivos caidos
+
+`monitor_dispositivos_caidos` revisa entidades de Home Assistant y detecta estados `unavailable/unknown`, entidades demasiado antiguas y baterias bajas. Solo propone mantenimiento; no reinicia ni cambia dispositivos automaticamente.
+
+```bash
+MONITOR_DISPOSITIVOS_ENTITIES="sensor.*,binary_sensor.*,switch.*,light.*"
+MONITOR_DISPOSITIVOS_IGNORE="sensor.ruidoso,binary_sensor.lento"
+MONITOR_DISPOSITIVOS_STALE_MINUTES="120"
+MONITOR_DISPOSITIVOS_VERY_STALE_MINUTES="720"
+MONITOR_DISPOSITIVOS_LOW_BATTERY_PERCENT="20"
+```
+
 ## Live Context Manager
 
 SegurAI incluye una primera vertical de `LiveContextManager` en `services/live_context/`.
