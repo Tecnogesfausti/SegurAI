@@ -749,6 +749,7 @@ class RuntimeConfig:
     mcp_cmd: list[str]
     ha_base_url: str | None
     ha_token: str | None
+    mcp_token: str | None
     fs_roots: list[Path]
 
 
@@ -1875,6 +1876,14 @@ async def terminal_loop(
         print(f"\n{answer}")
 
 
+def first_env(*names: str) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Agente terminal 24/7 con MCP Home Assistant, OpenRouter/DeepSeek y memoria local."
@@ -1918,8 +1927,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ha-token",
-        default=os.getenv("HA_TOKEN"),
-        help="Token de larga duración de Home Assistant. También puede venir de HA_TOKEN.",
+        default=first_env("HA_TOKEN", "HOME_ASSISTANT_TOKEN", "HA_LONG_LIVED_TOKEN"),
+        help="Token de larga duración de Home Assistant. También puede venir de HA_TOKEN/HOME_ASSISTANT_TOKEN.",
+    )
+    parser.add_argument(
+        "--mcp-token",
+        default=first_env("MCP_AUTH_TOKEN", "MCP_SERVER_API_KEY", "HA_TOKEN", "HOME_ASSISTANT_TOKEN", "HA_LONG_LIVED_TOKEN"),
+        help="Token Bearer para el MCP HTTP. También puede venir de MCP_AUTH_TOKEN o MCP_SERVER_API_KEY.",
     )
     parser.add_argument(
         "--fs-roots",
@@ -2036,6 +2050,7 @@ async def main() -> int:
         mcp_cmd=args.mcp_cmd,
         ha_base_url=derive_ha_base_url(args.mcp_url),
         ha_token=args.ha_token,
+        mcp_token=args.mcp_token,
         fs_roots=parse_fs_roots(args.fs_roots),
     )
 
@@ -2053,10 +2068,14 @@ async def main() -> int:
 
     try:
         if config.mcp_url:
-            if not args.ha_token:
-                print("Falta HA_TOKEN para conectar al MCP HTTP de Home Assistant.", file=sys.stderr)
+            if not config.mcp_token:
+                print(
+                    "Falta token para conectar al MCP HTTP de Home Assistant. "
+                    "Configura MCP_AUTH_TOKEN, MCP_SERVER_API_KEY, HA_TOKEN o HOME_ASSISTANT_TOKEN.",
+                    file=sys.stderr,
+                )
                 return 2
-            headers = {"Authorization": f"Bearer {args.ha_token}"}
+            headers = {"Authorization": f"Bearer {config.mcp_token}"}
             async with streamablehttp_client(config.mcp_url, headers=headers) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     await run_agent_session(
@@ -2088,11 +2107,18 @@ async def main() -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"No se pudo conectar o mantener la sesión MCP: {exception_summary(exc)}", file=sys.stderr)
         if config.mcp_url and "supervisor" in config.mcp_url:
-            print(
-                "La URL con host 'supervisor' normalmente solo resuelve dentro de Home Assistant. "
-                "Desde esta máquina usa la URL externa de HA, por ejemplo http://IP_DE_HA:8123/api/mcp.",
-                file=sys.stderr,
-            )
+            if os.getenv("SUPERVISOR_TOKEN"):
+                print(
+                    "El host 'supervisor' resolvió, pero Home Assistant rechazó el token. "
+                    "Revisa mcp_server_api_key, home_assistant_token o ha_long_lived_token en la configuración del add-on.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "La URL con host 'supervisor' normalmente solo resuelve dentro de Home Assistant. "
+                    "Desde esta máquina usa la URL externa de HA, por ejemplo http://IP_DE_HA:8123/api/mcp.",
+                    file=sys.stderr,
+                )
         return 1
     finally:
         memory.close()
