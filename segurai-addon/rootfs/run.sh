@@ -28,9 +28,23 @@ def value(name, default=''):
 def env_line(name, val):
     return f"{name}={shlex.quote(str(val))}"
 
-ha_token = value('home_assistant_token') or value('ha_long_lived_token') or os.environ.get('SUPERVISOR_TOKEN', '')
+home_assistant_token = value('home_assistant_token')
+ha_long_lived_token = value('ha_long_lived_token')
+ha_token = home_assistant_token or ha_long_lived_token or os.environ.get('SUPERVISOR_TOKEN', '')
 mcp_server_url = value('mcp_server_url') or 'http://supervisor/core/api/mcp'
 mcp_server_api_key = value('mcp_server_api_key') or os.environ.get('SUPERVISOR_TOKEN', '') or ha_token
+mcp_token_source = (
+    'mcp_server_api_key'
+    if value('mcp_server_api_key')
+    else 'SUPERVISOR_TOKEN'
+    if os.environ.get('SUPERVISOR_TOKEN')
+    else 'HA_TOKEN'
+    if ha_token
+    else 'none'
+)
+if not os.environ.get('SUPERVISOR_TOKEN') and mcp_server_url in ('', 'http://supervisor/core/api/mcp'):
+    mcp_server_url = 'http://homeassistant:8123/api/mcp'
+
 codex_model = value('codex_model', 'gpt-5.3-codex')
 codex_home = value('codex_home', '/data/codex')
 workspace = value('workspace', '/config/segurai-dev')
@@ -57,6 +71,7 @@ lines = [
     env_line("MCP_SERVER_URL", mcp_server_url),
     env_line("MCP_SERVER_API_KEY", mcp_server_api_key),
     env_line("MCP_AUTH_TOKEN", mcp_server_api_key),
+    env_line("SEGURAI_MCP_TOKEN_SOURCE", mcp_token_source),
     env_line("HOME_ASSISTANT_URL", "http://supervisor/core"),
     env_line("HA_TOKEN", ha_token),
     env_line("HOME_ASSISTANT_TOKEN", ha_token),
@@ -74,6 +89,8 @@ mkdir -p "${CONFIG_DIR}/agents/pending"
 set -a
 . "${ENV_FILE}"
 set +a
+
+echo "[SegurAI add-on] MCP URL: ${HA_MCP_URL} (token: ${SEGURAI_MCP_TOKEN_SOURCE})"
 
 mkdir -p "$CODEX_HOME" "$WORKSPACE"
 

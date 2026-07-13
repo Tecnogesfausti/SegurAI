@@ -1,6 +1,6 @@
 name: SegurAI
 slug: segurai
-version: 0.2.2
+version: 0.2.3
 description: Agente local 24/7 con Home Assistant MCP, OpenRouter, memoria y panel web.
 url: https://github.com/Tecnogesfausti/SegurAI
 arch:
@@ -18,6 +18,7 @@ panel_icon: mdi:shield-home
 panel_title: SegurAI
 homeassistant_api: true
 hassio_api: true
+hassio_role: admin
 host_network: false
 ports:
   8099/tcp: null
