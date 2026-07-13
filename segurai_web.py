@@ -275,6 +275,9 @@ SegurAI is the long-running service. Codex is the maintenance workshop.
 - Agent config: `{AGENT_CONFIG_PATH}`
 - Codex context: `{CODEX_CONTEXT_PATH}`
 - Codex notes: `{CODEX_NOTES_PATH}`
+- Codex home: `{os.getenv("CODEX_HOME", "")}`
+- Workspace: `{os.getenv("WORKSPACE") or os.getenv("SEGURAI_WORKSPACE", "")}`
+- Codex model: `{os.getenv("CODEX_MODEL", "")}`
 
 ## Service Contract
 

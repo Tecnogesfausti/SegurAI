@@ -358,6 +358,20 @@ El agente diferencia prediccion/modelo de medicion observada y solo recomienda p
 
 
 
+
+### Configuracion Codex interactivo
+
+SegurAI acepta tambien la configuracion compatible con el add-on `ha_codex_agent`:
+
+```yaml
+codex_model: "gpt-5.3-codex"
+codex_home: "/data/codex"
+workspace: "/config/segurai-dev"
+mcp_server_url: "http://supervisor/core/api/mcp"
+```
+
+El add-on exporta `CODEX_MODEL`, `CODEX_HOME` y `WORKSPACE`, y crea esos directorios al arrancar. `workspace` es el sitio recomendado para clonar el repo SegurAI y dejar que Codex modifique codigo, haga commits y prepare backups.
+
 ### Backup cifrado de memoria
 
 SegurAI puede crear un backup de reconstruccion que incluye memoria SQLite, tareas, observaciones, configuracion de agentes, agentes vivos, contexto Codex, notas y logs. Desde la UI usa **Backups** o llama `POST /api/backup`.

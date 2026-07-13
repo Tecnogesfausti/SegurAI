@@ -30,6 +30,9 @@ def env_line(name, val):
 ha_token = value('home_assistant_token') or value('ha_long_lived_token') or os.environ.get('SUPERVISOR_TOKEN', '')
 mcp_server_url = value('mcp_server_url') or 'http://supervisor/core/api/mcp'
 mcp_server_api_key = value('mcp_server_api_key') or os.environ.get('SUPERVISOR_TOKEN', '') or ha_token
+codex_model = value('codex_model', 'gpt-5.3-codex')
+codex_home = value('codex_home', '/data/codex')
+workspace = value('workspace', '/config/segurai-dev')
 
 lines = [
     env_line("OPENROUTER_API_KEY", value('openrouter_api_key', '')),
@@ -41,6 +44,10 @@ lines = [
     env_line("SEGURAI_CODEX_NOTES", "/config/data/CODEX_NOTES.md"),
     env_line("SEGURAI_BACKUP_DIR", "/config/data/backups"),
     env_line("SEGURAI_BACKUP_KEY", value('backup_key')),
+    env_line("CODEX_MODEL", codex_model),
+    env_line("CODEX_HOME", codex_home),
+    env_line("WORKSPACE", workspace),
+    env_line("SEGURAI_WORKSPACE", workspace),
     env_line("SEGURAI_LOG_FILE", "/config/data/segurai_runtime.log"),
     env_line("SEGURAI_POLL_SECONDS", value('poll_seconds', 300)),
     env_line("SEGURAI_SENSOR_PROMPT", value('sensor_prompt', '')),
@@ -66,6 +73,8 @@ mkdir -p "${CONFIG_DIR}/agents/pending"
 set -a
 . "${ENV_FILE}"
 set +a
+
+mkdir -p "$CODEX_HOME" "$WORKSPACE"
 
 read_bool() {
   key="$1"

@@ -30,9 +30,12 @@ options:
   openrouter_api_key: ""
   home_assistant_token: ""
   ha_long_lived_token: ""
-  mcp_server_url: ""
+  mcp_server_url: "http://supervisor/core/api/mcp"
   mcp_server_api_key: ""
   backup_key: ""
+  codex_model: "gpt-5.3-codex"
+  codex_home: "/data/codex"
+  workspace: "/config/segurai-dev"
   model_routes: model_routes.yaml
   poll_seconds: 300
   sensor_prompt: Consulta sensores de presencia, puertas, ventanas, movimiento, alarma y cámaras si existen.
@@ -48,6 +51,9 @@ schema:
   mcp_server_url: "str?"
   mcp_server_api_key: "password?"
   backup_key: "password?"
+  codex_model: "str"
+  codex_home: "str"
+  workspace: "str"
   model_routes: str
   poll_seconds: int(30,86400)
   sensor_prompt: str
