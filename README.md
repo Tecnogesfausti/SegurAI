@@ -356,6 +356,23 @@ El agente diferencia prediccion/modelo de medicion observada y solo recomienda p
 
 
 
+
+### Contexto para Codex interactivo
+
+El panel web genera un contexto de mantenimiento para una sesion Codex/tmux externa o futura:
+
+- `CODEX_CONTEXT.md`: estado vivo de SegurAI, rutas, agentes, tareas, observaciones y cola de logs.
+- `CODEX_NOTES.md`: notas humanas o de Codex para enseñar criterios, errores conocidos y decisiones de diseño.
+
+En el add-on se guardan en:
+
+```text
+/config/data/CODEX_CONTEXT.md
+/config/data/CODEX_NOTES.md
+```
+
+Desde la UI usa **Codex mantenimiento** para refrescar el contexto y guardar notas. Desde una terminal Codex, abre primero `CODEX_CONTEXT.md` y usa esas rutas para corregir o extender SegurAI.
+
 ### Configuracion compartida HA/MCP
 
 SegurAI usa los mismos nombres de configuracion que `ha_codex_agent` para Home Assistant y MCP:

@@ -35,6 +35,8 @@ DB_PATH = Path(os.getenv("SEGURAI_DB", str(DATA_DIR / "segurai_memory.sqlite3"))
 LOG_PATH = Path(os.getenv("SEGURAI_LOG_FILE", str(DATA_DIR / "segurai_runtime.log")))
 AGENTS_DIR = Path(os.getenv("SEGURAI_AGENTS_DIR", "agents"))
 AGENT_CONFIG_PATH = Path(os.getenv("SEGURAI_AGENT_CONFIG", str(DATA_DIR / "agent_config.json")))
+CODEX_CONTEXT_PATH = Path(os.getenv("SEGURAI_CODEX_CONTEXT", str(DATA_DIR / "CODEX_CONTEXT.md")))
+CODEX_NOTES_PATH = Path(os.getenv("SEGURAI_CODEX_NOTES", str(DATA_DIR / "CODEX_NOTES.md")))
 
 app = FastAPI(title="SegurAI", version="0.2.0")
 
@@ -232,6 +234,88 @@ def agent_rows() -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: (-int(item["effective_priority"]), item["name"]))
 
 
+def markdown_table(rows: list[dict[str, Any]], columns: list[str]) -> str:
+    if not rows:
+        return "_Sin datos._\n"
+    header = "| " + " | ".join(columns) + " |"
+    sep = "| " + " | ".join("---" for _ in columns) + " |"
+    body = []
+    for row in rows:
+        body.append("| " + " | ".join(str(row.get(col, "")).replace("\n", " ")[:180] for col in columns) + " |")
+    return "\n".join([header, sep, *body]) + "\n"
+
+
+def build_codex_context() -> str:
+    agents = agent_rows()
+    tasks = api_tasks(limit=12, include_done=True)
+    observations = api_observations(limit=12)
+    status = api_status()
+    notes = CODEX_NOTES_PATH.read_text(encoding="utf-8", errors="replace") if CODEX_NOTES_PATH.exists() else ""
+    log_tail = "\n".join(tail_log(40))
+    return f"""# SegurAI Codex Maintenance Context
+
+Generated: {utc_now()}
+
+## Purpose
+
+Use this file from an interactive Codex/tmux session to inspect, teach, correct and extend SegurAI.
+SegurAI is the long-running service. Codex is the maintenance workshop.
+
+## Important Paths
+
+- App directory: `{Path.cwd()}`
+- Agents directory: `{AGENTS_DIR}`
+- Database: `{DB_PATH}`
+- Runtime log: `{LOG_PATH}`
+- Agent config: `{AGENT_CONFIG_PATH}`
+- Codex context: `{CODEX_CONTEXT_PATH}`
+- Codex notes: `{CODEX_NOTES_PATH}`
+
+## Service Contract
+
+- Prefer editing or adding agents in `{AGENTS_DIR}`.
+- Do not execute physical Home Assistant actions without explicit confirmation.
+- Prefer deterministic logic over LLM calls for thresholds, timestamps, distances and deduplication.
+- After changes, run tests with `python -m unittest discover -s tests -t . -v` when available.
+- Use the web UI/API to create tasks and run agents manually.
+
+## Current Status
+
+```json
+{json.dumps(status, ensure_ascii=False, indent=2)}
+```
+
+## Agents
+
+{markdown_table(agents, ['name', 'enabled', 'effective_priority', 'effective_frequency_seconds', 'description'])}
+
+## Recent Tasks
+
+{markdown_table(tasks, ['id', 'status', 'run_at', 'priority', 'title', 'result', 'last_error'])}
+
+## Recent Observations
+
+{markdown_table(observations, ['created_at', 'source', 'summary'])}
+
+## Operator Notes
+
+{notes or '_Sin notas todavía._'}
+
+## Recent Log Tail
+
+```text
+{log_tail or 'Sin logs.'}
+```
+"""
+
+
+def write_codex_context() -> str:
+    CODEX_CONTEXT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    text = build_codex_context()
+    CODEX_CONTEXT_PATH.write_text(text, encoding="utf-8")
+    return text
+
+
 @app.get("/api/status")
 def api_status() -> dict[str, Any]:
     tasks = sqlite_rows("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status")
@@ -409,6 +493,35 @@ async def api_run_agent(name: str) -> dict[str, Any]:
     return {"ok": result.ok, "message": result.message, "data": result.data}
 
 
+
+
+@app.get("/api/codex/context")
+def api_codex_context(refresh: bool = False) -> dict[str, Any]:
+    text = write_codex_context() if refresh or not CODEX_CONTEXT_PATH.exists() else CODEX_CONTEXT_PATH.read_text(encoding="utf-8", errors="replace")
+    return {"path": str(CODEX_CONTEXT_PATH), "text": text}
+
+
+@app.post("/api/codex/context/refresh")
+def api_refresh_codex_context() -> dict[str, Any]:
+    text = write_codex_context()
+    return {"ok": True, "path": str(CODEX_CONTEXT_PATH), "bytes": len(text.encode("utf-8"))}
+
+
+@app.get("/api/codex/notes")
+def api_codex_notes() -> dict[str, Any]:
+    text = CODEX_NOTES_PATH.read_text(encoding="utf-8", errors="replace") if CODEX_NOTES_PATH.exists() else ""
+    return {"path": str(CODEX_NOTES_PATH), "text": text}
+
+
+@app.post("/api/codex/notes")
+def api_update_codex_notes(payload: dict[str, Any]) -> dict[str, Any]:
+    text = str(payload.get("text") or "")
+    CODEX_NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CODEX_NOTES_PATH.write_text(text, encoding="utf-8")
+    write_codex_context()
+    return {"ok": True, "path": str(CODEX_NOTES_PATH)}
+
+
 @app.get("/api/logs")
 def api_logs(limit: int = 80) -> dict[str, Any]:
     return {"lines": tail_log(max(1, min(limit, 500)))}
@@ -517,6 +630,13 @@ def index() -> str:
       <section class="side"><h2>Herramientas</h2><div id="tools"></div></section>
       <section class="wide"><h2>Observaciones recientes</h2><ul id="observationList"></ul></section>
       <section class="side"><h2>Estado</h2><pre id="status"></pre></section>
+      <section class="full">
+        <h2>Codex mantenimiento</h2>
+        <div class="toolbar"><button class="secondary" onclick="refreshCodexContext()">Actualizar contexto</button><span class="muted" id="codexPath">-</span></div>
+        <label>Notas para enseñar/corregir SegurAI<textarea id="codexNotes" placeholder="Criterios, decisiones, errores conocidos, ideas de nuevos agentes..."></textarea></label>
+        <div class="toolbar"><button onclick="saveCodexNotes()">Guardar notas</button></div>
+        <pre id="codexContext"></pre>
+      </section>
       <section class="full"><h2>Logs</h2><pre id="logs"></pre></section>
     </div>
   </main>
@@ -538,8 +658,8 @@ function showNotice(message, kind = 'ok') {
 }
 function isoFromLocal(value) { return value ? new Date(value).toISOString() : null; }
 async function loadAll() {
-  const [status, observations, tasks, logs, tools, agents] = await Promise.all([
-    requestJSON('/api/status'), requestJSON('/api/observations'), requestJSON('/api/tasks'), requestJSON('/api/logs'), requestJSON('/api/tools'), requestJSON('/api/agents')
+  const [status, observations, tasks, logs, tools, agents, codex, notes] = await Promise.all([
+    requestJSON('/api/status'), requestJSON('/api/observations'), requestJSON('/api/tasks'), requestJSON('/api/logs'), requestJSON('/api/tools'), requestJSON('/api/agents'), requestJSON('/api/codex/context'), requestJSON('/api/codex/notes')
   ]);
   document.getElementById('memories').textContent = status.memories;
   document.getElementById('observations').textContent = status.observations;
@@ -548,6 +668,9 @@ async function loadAll() {
   document.getElementById('status').textContent = JSON.stringify(status, null, 2);
   document.getElementById('logs').textContent = logs.lines.join('\\n') || 'Sin logs todavia.';
   document.getElementById('tools').innerHTML = tools.tools.map(t => `<span class="pill">${html(t)}</span>`).join('');
+  document.getElementById('codexPath').textContent = codex.path;
+  document.getElementById('codexContext').textContent = codex.text;
+  document.getElementById('codexNotes').value = notes.text || '';
   renderTasks(tasks);
   renderAgents(agents.agents || []);
   document.getElementById('observationList').innerHTML = observations.length ? observations.map(o => `<li><strong>${html(o.source)}</strong> <span class="muted">${html(o.created_at)}</span><br>${html(o.summary)}</li>`).join('') : '<li>Sin observaciones todavia.</li>';
@@ -593,6 +716,8 @@ async function cancelTask(id) { try { await requestJSON(`/api/tasks/${id}/cancel
 async function deleteTask(id) { if (confirm('Eliminar tarea #' + id + '?')) { try { await requestJSON(`/api/tasks/${id}`, {method: 'DELETE'}); showNotice('Tarea eliminada'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } } }
 async function updateAgent(name, payload) { try { await requestJSON(`/api/agents/${encodeURIComponent(name)}`, {method: 'PATCH', body: JSON.stringify(payload)}); showNotice('Agente actualizado'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
 async function runAgent(name) { try { const result = await requestJSON(`/api/agents/${encodeURIComponent(name)}/run`, {method: 'POST'}); showNotice(result.message, result.ok ? 'ok' : 'error'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+async function refreshCodexContext() { try { await requestJSON('/api/codex/context/refresh', {method: 'POST'}); showNotice('Contexto Codex actualizado'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+async function saveCodexNotes() { try { await requestJSON('/api/codex/notes', {method: 'POST', body: JSON.stringify({text: document.getElementById('codexNotes').value})}); showNotice('Notas Codex guardadas'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
 loadAll().catch(err => { showNotice(err.message, 'error'); });
 </script>
 </body>
