@@ -28,6 +28,10 @@ map:
   - share:rw
 options:
   openrouter_api_key: ""
+  home_assistant_token: ""
+  ha_long_lived_token: ""
+  mcp_server_url: ""
+  mcp_server_api_key: ""
   model_routes: model_routes.yaml
   poll_seconds: 300
   sensor_prompt: Consulta sensores de presencia, puertas, ventanas, movimiento, alarma y cámaras si existen.
@@ -38,6 +42,10 @@ options:
   web_only: true
 schema:
   openrouter_api_key: password
+  home_assistant_token: "password?"
+  ha_long_lived_token: "password?"
+  mcp_server_url: "str?"
+  mcp_server_api_key: "password?"
   model_routes: str
   poll_seconds: int(30,86400)
   sensor_prompt: str

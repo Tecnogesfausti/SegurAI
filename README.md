@@ -355,6 +355,20 @@ El agente diferencia prediccion/modelo de medicion observada y solo recomienda p
 
 
 
+
+### Configuracion compartida HA/MCP
+
+SegurAI usa los mismos nombres de configuracion que `ha_codex_agent` para Home Assistant y MCP:
+
+```yaml
+home_assistant_token: ""
+ha_long_lived_token: ""
+mcp_server_url: ""
+mcp_server_api_key: ""
+```
+
+Precedencia del token HA: `home_assistant_token`, despues `ha_long_lived_token`, y por ultimo `SUPERVISOR_TOKEN`. Si `mcp_server_url` queda vacio se usa `http://supervisor/core/api/mcp`. `mcp_server_api_key` cae a `SUPERVISOR_TOKEN` o al token HA.
+
 ### Servicio persistente en el add-on
 
 El add-on puede arrancar SegurAI como servicio 24/7 en segundo plano mientras mantiene el panel web abierto. La opción `agent_service_enabled` controla ese proceso. En modo servicio se usa `segurai.py --service`, que mantiene MCP, scheduler de tareas y observadores sin abrir el prompt interactivo.

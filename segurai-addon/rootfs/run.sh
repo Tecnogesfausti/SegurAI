@@ -20,7 +20,12 @@ config_dir = Path('/config')
 env_path = config_dir / 'segurai.env'
 
 def value(name, default=''):
-    return options.get(name, default)
+    item = options.get(name, default)
+    return item if item is not None else default
+
+ha_token = value('home_assistant_token') or value('ha_long_lived_token') or os.environ.get('SUPERVISOR_TOKEN', '')
+mcp_server_url = value('mcp_server_url') or 'http://supervisor/core/api/mcp'
+mcp_server_api_key = value('mcp_server_api_key') or os.environ.get('SUPERVISOR_TOKEN', '') or ha_token
 
 lines = [
     f"OPENROUTER_API_KEY={value('openrouter_api_key', '')}",
@@ -32,10 +37,14 @@ lines = [
     f"SEGURAI_POLL_SECONDS={value('poll_seconds', 300)}",
     f"SEGURAI_SENSOR_PROMPT={value('sensor_prompt', '')}",
     f"SEGURAI_FS_ROOTS={value('fs_roots', '/config,/share')}",
-    "HA_MCP_URL=http://supervisor/core/api/mcp",
+    f"HA_MCP_URL={mcp_server_url}",
+    f"MCP_SERVER_URL={mcp_server_url}",
+    f"MCP_SERVER_API_KEY={mcp_server_api_key}",
+    f"MCP_AUTH_TOKEN={mcp_server_api_key}",
     "HOME_ASSISTANT_URL=http://supervisor/core",
-    f"HA_TOKEN={os.environ.get('SUPERVISOR_TOKEN', '')}",
-    f"HOME_ASSISTANT_TOKEN={os.environ.get('SUPERVISOR_TOKEN', '')}",
+    f"HA_TOKEN={ha_token}",
+    f"HOME_ASSISTANT_TOKEN={ha_token}",
+    f"HA_LONG_LIVED_TOKEN={value('ha_long_lived_token')}",
 ]
 env_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 env_path.chmod(0o600)
