@@ -12,6 +12,7 @@ mkdir -p "${CONFIG_DIR}" "${CONFIG_DIR}/agents" "${CONFIG_DIR}/data"
 python3 - <<'PY'
 import json
 import os
+import shlex
 from pathlib import Path
 
 options_path = Path('/data/options.json')
@@ -23,32 +24,35 @@ def value(name, default=''):
     item = options.get(name, default)
     return item if item is not None else default
 
+def env_line(name, val):
+    return f"{name}={shlex.quote(str(val))}"
+
 ha_token = value('home_assistant_token') or value('ha_long_lived_token') or os.environ.get('SUPERVISOR_TOKEN', '')
 mcp_server_url = value('mcp_server_url') or 'http://supervisor/core/api/mcp'
 mcp_server_api_key = value('mcp_server_api_key') or os.environ.get('SUPERVISOR_TOKEN', '') or ha_token
 
 lines = [
-    f"OPENROUTER_API_KEY={value('openrouter_api_key', '')}",
-    f"SEGURAI_MODEL_ROUTES=/app/{value('model_routes', 'model_routes.yaml')}",
-    "SEGURAI_AGENTS_DIR=/config/agents",
-    "SEGURAI_DB=/config/data/segurai_memory.sqlite3",
-    "SEGURAI_AGENT_CONFIG=/config/data/agent_config.json",
-    "SEGURAI_CODEX_CONTEXT=/config/data/CODEX_CONTEXT.md",
-    "SEGURAI_CODEX_NOTES=/config/data/CODEX_NOTES.md",
-    "SEGURAI_BACKUP_DIR=/config/data/backups",
-    f"SEGURAI_BACKUP_KEY={value('backup_key')}",
-    "SEGURAI_LOG_FILE=/config/data/segurai_runtime.log",
-    f"SEGURAI_POLL_SECONDS={value('poll_seconds', 300)}",
-    f"SEGURAI_SENSOR_PROMPT={value('sensor_prompt', '')}",
-    f"SEGURAI_FS_ROOTS={value('fs_roots', '/config,/share')}",
-    f"HA_MCP_URL={mcp_server_url}",
-    f"MCP_SERVER_URL={mcp_server_url}",
-    f"MCP_SERVER_API_KEY={mcp_server_api_key}",
-    f"MCP_AUTH_TOKEN={mcp_server_api_key}",
-    "HOME_ASSISTANT_URL=http://supervisor/core",
-    f"HA_TOKEN={ha_token}",
-    f"HOME_ASSISTANT_TOKEN={ha_token}",
-    f"HA_LONG_LIVED_TOKEN={value('ha_long_lived_token')}",
+    env_line("OPENROUTER_API_KEY", value('openrouter_api_key', '')),
+    env_line("SEGURAI_MODEL_ROUTES", f"/app/{value('model_routes', 'model_routes.yaml')}"),
+    env_line("SEGURAI_AGENTS_DIR", "/config/agents"),
+    env_line("SEGURAI_DB", "/config/data/segurai_memory.sqlite3"),
+    env_line("SEGURAI_AGENT_CONFIG", "/config/data/agent_config.json"),
+    env_line("SEGURAI_CODEX_CONTEXT", "/config/data/CODEX_CONTEXT.md"),
+    env_line("SEGURAI_CODEX_NOTES", "/config/data/CODEX_NOTES.md"),
+    env_line("SEGURAI_BACKUP_DIR", "/config/data/backups"),
+    env_line("SEGURAI_BACKUP_KEY", value('backup_key')),
+    env_line("SEGURAI_LOG_FILE", "/config/data/segurai_runtime.log"),
+    env_line("SEGURAI_POLL_SECONDS", value('poll_seconds', 300)),
+    env_line("SEGURAI_SENSOR_PROMPT", value('sensor_prompt', '')),
+    env_line("SEGURAI_FS_ROOTS", value('fs_roots', '/config,/share')),
+    env_line("HA_MCP_URL", mcp_server_url),
+    env_line("MCP_SERVER_URL", mcp_server_url),
+    env_line("MCP_SERVER_API_KEY", mcp_server_api_key),
+    env_line("MCP_AUTH_TOKEN", mcp_server_api_key),
+    env_line("HOME_ASSISTANT_URL", "http://supervisor/core"),
+    env_line("HA_TOKEN", ha_token),
+    env_line("HOME_ASSISTANT_TOKEN", ha_token),
+    env_line("HA_LONG_LIVED_TOKEN", value('ha_long_lived_token')),
 ]
 env_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 env_path.chmod(0o600)
