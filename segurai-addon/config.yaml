@@ -1,6 +1,6 @@
 name: SegurAI
 slug: segurai
-version: 0.2.0
+version: 0.2.1
 description: Agente local 24/7 con Home Assistant MCP, OpenRouter, memoria y panel web.
 url: https://github.com/Tecnogesfausti/SegurAI
 arch:
@@ -21,8 +21,10 @@ hassio_api: true
 host_network: false
 ports:
   8099/tcp: null
+  8098/tcp: 8098
 ports_description:
   8099/tcp: Panel web de SegurAI
+  8098/tcp: Terminal persistente tmux de SegurAI
 map:
   - addon_config:rw
   - share:rw
@@ -43,6 +45,10 @@ options:
   no_sensor_loop: false
   allow_actions_without_confirmation: false
   agent_service_enabled: true
+  terminal_enabled: true
+  terminal_port: 8098
+  terminal_username: "segurai"
+  terminal_password: "segurai"
   web_only: true
 schema:
   openrouter_api_key: password
@@ -61,4 +67,8 @@ schema:
   no_sensor_loop: bool
   allow_actions_without_confirmation: bool
   agent_service_enabled: bool
+  terminal_enabled: bool
+  terminal_port: int(1024,65535)
+  terminal_username: str
+  terminal_password: password
   web_only: bool

@@ -6,6 +6,7 @@ APP_DIR=/app
 OPTIONS=/data/options.json
 ENV_FILE="${CONFIG_DIR}/segurai.env"
 SERVICE_LOG="${CONFIG_DIR}/data/segurai_service.log"
+TERMINAL_LOG="${CONFIG_DIR}/data/segurai_terminal.log"
 
 mkdir -p "${CONFIG_DIR}" "${CONFIG_DIR}/agents" "${CONFIG_DIR}/data"
 
@@ -91,6 +92,28 @@ PY
 
 WEB_ONLY=$(read_bool web_only true)
 AGENT_SERVICE_ENABLED=$(read_bool agent_service_enabled true)
+TERMINAL_ENABLED=$(read_bool terminal_enabled true)
+TERMINAL_PORT=$(python3 - <<'PY'
+import json
+from pathlib import Path
+options = json.loads(Path('/data/options.json').read_text(encoding='utf-8')) if Path('/data/options.json').exists() else {}
+print(int(options.get('terminal_port', 8098)))
+PY
+)
+TERMINAL_USERNAME=$(python3 - <<'PY'
+import json
+from pathlib import Path
+options = json.loads(Path('/data/options.json').read_text(encoding='utf-8')) if Path('/data/options.json').exists() else {}
+print(options.get('terminal_username') or 'segurai')
+PY
+)
+TERMINAL_PASSWORD=$(python3 - <<'PY'
+import json
+from pathlib import Path
+options = json.loads(Path('/data/options.json').read_text(encoding='utf-8')) if Path('/data/options.json').exists() else {}
+print(options.get('terminal_password') or 'segurai')
+PY
+)
 NO_SENSOR_LOOP=$(read_bool no_sensor_loop false)
 ALLOW_ACTIONS=$(read_bool allow_actions_without_confirmation false)
 
@@ -105,6 +128,21 @@ fi
 if [ "$AGENT_SERVICE_ENABLED" = "true" ]; then
   echo "[SegurAI add-on] starting SegurAI service" | tee -a "$SERVICE_LOG"
   python3 segurai.py --service $ARGS >>"$SERVICE_LOG" 2>&1 &
+fi
+
+if [ "$TERMINAL_ENABLED" = "true" ]; then
+  echo "[SegurAI add-on] starting tmux terminal on ${TERMINAL_PORT}" | tee -a "$TERMINAL_LOG"
+  ttyd \
+    --port "$TERMINAL_PORT" \
+    --interface 0.0.0.0 \
+    --credential "${TERMINAL_USERNAME}:${TERMINAL_PASSWORD}" \
+    --writable \
+    --terminal-type xterm-256color \
+    --client-option titleFixed="SegurAI Terminal" \
+    --client-option cursorBlink=true \
+    --client-option cursorStyle=bar \
+    --client-option disableLeaveAlert=true \
+    /usr/local/bin/segurai-terminal.sh >>"$TERMINAL_LOG" 2>&1 &
 fi
 
 if [ "$WEB_ONLY" = "true" ]; then

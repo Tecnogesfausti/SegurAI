@@ -359,6 +359,26 @@ El agente diferencia prediccion/modelo de medicion observada y solo recomienda p
 
 
 
+
+### Terminal tmux persistente
+
+El add-on mantiene una terminal persistente basada en `ttyd + tmux`, separada del panel web. La web sigue en `8099`; la terminal escucha por defecto en `8098` y siempre reengancha a la sesion `segurai-terminal`.
+
+```yaml
+terminal_enabled: true
+terminal_port: 8098
+terminal_username: "segurai"
+terminal_password: "cambiala-en-tu-addon"
+```
+
+La terminal arranca en `workspace` y conserva estado aunque cierres el navegador. Logs:
+
+```text
+/config/data/segurai_terminal.log
+```
+
+Desde ella puedes abrir `CODEX_CONTEXT.md`, revisar logs, lanzar Codex o trabajar en el workspace Git sin parar el servicio SegurAI. Al ser una shell real expuesta por puerto directo, cambia `terminal_password` antes de dejarla activa en tu red.
+
 ### Configuracion Codex interactivo
 
 SegurAI acepta tambien la configuracion compatible con el add-on `ha_codex_agent`:
@@ -437,7 +457,7 @@ web_only: true
 
 Con esta combinación, la web queda disponible por Ingress/puerto 8099 y las tareas creadas desde la UI son ejecutadas por el proceso SegurAI residente. Los logs del servicio se escriben en `/config/data/segurai_service.log`.
 
-La terminal persistente tipo `tmux` del add-on `ha_codex_agent` puede añadirse después como herramienta opcional de mantenimiento, pero no debe ser el motor del scheduler: SegurAI ya puede esperar, ejecutar tareas y guardar resultados de forma persistente.
+La terminal persistente tipo `tmux` queda integrada como herramienta de mantenimiento y desarrollo. No es el motor del scheduler: SegurAI ya puede esperar, ejecutar tareas y guardar resultados de forma persistente desde su proceso de servicio.
 
 ### Panel web operativo
 
