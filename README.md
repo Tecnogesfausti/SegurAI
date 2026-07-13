@@ -354,6 +354,20 @@ MONITOR_CALIDAD_AIRE_MAX_VENTILATION_AQI="80"
 El agente diferencia prediccion/modelo de medicion observada y solo recomienda prudencia; no ejecuta acciones fisicas.
 
 
+
+### Servicio persistente en el add-on
+
+El add-on puede arrancar SegurAI como servicio 24/7 en segundo plano mientras mantiene el panel web abierto. La opción `agent_service_enabled` controla ese proceso. En modo servicio se usa `segurai.py --service`, que mantiene MCP, scheduler de tareas y observadores sin abrir el prompt interactivo.
+
+```yaml
+agent_service_enabled: true
+web_only: true
+```
+
+Con esta combinación, la web queda disponible por Ingress/puerto 8099 y las tareas creadas desde la UI son ejecutadas por el proceso SegurAI residente. Los logs del servicio se escriben en `/config/data/segurai_service.log`.
+
+La terminal persistente tipo `tmux` del add-on `ha_codex_agent` puede añadirse después como herramienta opcional de mantenimiento, pero no debe ser el motor del scheduler: SegurAI ya puede esperar, ejecutar tareas y guardar resultados de forma persistente.
+
 ### Panel web operativo
 
 La UI web permite gestionar SegurAI desde el navegador:

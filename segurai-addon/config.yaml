@@ -34,6 +34,7 @@ options:
   fs_roots: /config,/share
   no_sensor_loop: false
   allow_actions_without_confirmation: false
+  agent_service_enabled: true
   web_only: true
 schema:
   openrouter_api_key: password
@@ -43,4 +44,5 @@ schema:
   fs_roots: str
   no_sensor_loop: bool
   allow_actions_without_confirmation: bool
+  agent_service_enabled: bool
   web_only: bool

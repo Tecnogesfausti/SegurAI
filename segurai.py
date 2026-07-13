@@ -744,6 +744,7 @@ class RuntimeConfig:
     sensor_prompt: str
     enable_sensor_loop: bool
     require_action_confirmation: bool
+    service_mode: bool
     mcp_url: str | None
     mcp_cmd: list[str]
     ha_base_url: str | None
@@ -1906,6 +1907,11 @@ def parse_args() -> argparse.Namespace:
         help="Permite acciones MCP sin confirmación explícita previa.",
     )
     parser.add_argument(
+        "--service",
+        action="store_true",
+        help="Arranca como servicio 24/7 sin prompt interactivo; mantiene tareas y observadores.",
+    )
+    parser.add_argument(
         "--mcp-url",
         default=os.getenv("HA_MCP_URL"),
         help="URL MCP HTTP de Home Assistant. También puede venir de HA_MCP_URL.",
@@ -1968,10 +1974,11 @@ async def run_agent_session(
     print(f"Conectado a MCP con {len(tools)} herramientas.")
     print(f"Agentes descubiertos: {len(agent_manager.agents)}")
     runtime_log("info", "segurai", "started", mcp_tools=len(tools), agents=len(agent_manager.agents))
-    tasks = [
-        asyncio.create_task(terminal_loop(agent, config, stop, agent_manager)),
-        asyncio.create_task(task_loop(agent, stop)),
-    ]
+    tasks = [asyncio.create_task(task_loop(agent, stop))]
+    if not config.service_mode:
+        tasks.insert(0, asyncio.create_task(terminal_loop(agent, config, stop, agent_manager)))
+    else:
+        print("SegurAI servicio 24/7 activo: prompt interactivo desactivado.")
     if config.enable_sensor_loop:
         tasks.append(
             asyncio.create_task(
@@ -2024,6 +2031,7 @@ async def main() -> int:
         ),
         enable_sensor_loop=not args.no_sensor_loop,
         require_action_confirmation=not args.allow_actions_without_confirmation,
+        service_mode=args.service,
         mcp_url=args.mcp_url,
         mcp_cmd=args.mcp_cmd,
         ha_base_url=derive_ha_base_url(args.mcp_url),
