@@ -5,7 +5,10 @@ import dataclasses
 import datetime as dt
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,8 @@ AGENTS_DIR = Path(os.getenv("SEGURAI_AGENTS_DIR", "agents"))
 AGENT_CONFIG_PATH = Path(os.getenv("SEGURAI_AGENT_CONFIG", str(DATA_DIR / "agent_config.json")))
 CODEX_CONTEXT_PATH = Path(os.getenv("SEGURAI_CODEX_CONTEXT", str(DATA_DIR / "CODEX_CONTEXT.md")))
 CODEX_NOTES_PATH = Path(os.getenv("SEGURAI_CODEX_NOTES", str(DATA_DIR / "CODEX_NOTES.md")))
+BACKUP_DIR = Path(os.getenv("SEGURAI_BACKUP_DIR", str(DATA_DIR / "backups")))
+BACKUP_KEY = os.getenv("SEGURAI_BACKUP_KEY", "")
 
 app = FastAPI(title="SegurAI", version="0.2.0")
 
@@ -316,6 +321,71 @@ def write_codex_context() -> str:
     return text
 
 
+def backup_sources() -> list[tuple[Path, str]]:
+    sources: list[tuple[Path, str]] = []
+    for path, arcname in [
+        (DB_PATH, "data/segurai_memory.sqlite3"),
+        (AGENT_CONFIG_PATH, "data/agent_config.json"),
+        (CODEX_CONTEXT_PATH, "data/CODEX_CONTEXT.md"),
+        (CODEX_NOTES_PATH, "data/CODEX_NOTES.md"),
+        (LOG_PATH, "data/segurai_runtime.log"),
+    ]:
+        if path.exists():
+            sources.append((path, arcname))
+    if AGENTS_DIR.exists():
+        sources.append((AGENTS_DIR, "agents"))
+    return sources
+
+
+def create_backup_archive(*, passphrase: str | None = None) -> dict[str, Any]:
+    write_codex_context()
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    tar_path = BACKUP_DIR / f"segurai-backup-{stamp}.tar.gz"
+    manifest = {
+        "created_at": utc_now(),
+        "app": APP_NAME,
+        "db_path": str(DB_PATH),
+        "agents_dir": str(AGENTS_DIR),
+        "included": [],
+    }
+    with tarfile.open(tar_path, "w:gz") as archive:
+        for source, arcname in backup_sources():
+            archive.add(source, arcname=arcname)
+            manifest["included"].append(arcname)
+        manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest_bytes)
+        info.mtime = int(dt.datetime.now(dt.UTC).timestamp())
+        import io
+        archive.addfile(info, io.BytesIO(manifest_bytes))
+    key = passphrase if passphrase is not None else BACKUP_KEY
+    if key:
+        encrypted_path = tar_path.with_suffix(tar_path.suffix + ".enc")
+        openssl = shutil.which("openssl")
+        if not openssl:
+            tar_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail="openssl no esta disponible para cifrar el backup")
+        subprocess.run(
+            [openssl, "enc", "-aes-256-cbc", "-pbkdf2", "-salt", "-in", str(tar_path), "-out", str(encrypted_path), "-pass", "stdin"],
+            input=key.encode("utf-8"),
+            check=True,
+        )
+        tar_path.unlink(missing_ok=True)
+        return {"path": str(encrypted_path), "encrypted": True, "bytes": encrypted_path.stat().st_size, "manifest": manifest}
+    return {"path": str(tar_path), "encrypted": False, "bytes": tar_path.stat().st_size, "manifest": manifest}
+
+
+def list_backups() -> list[dict[str, Any]]:
+    if not BACKUP_DIR.exists():
+        return []
+    rows = []
+    for path in sorted(BACKUP_DIR.glob("segurai-backup-*"), reverse=True):
+        if path.is_file():
+            rows.append({"name": path.name, "path": str(path), "bytes": path.stat().st_size, "encrypted": path.name.endswith(".enc")})
+    return rows
+
+
 @app.get("/api/status")
 def api_status() -> dict[str, Any]:
     tasks = sqlite_rows("SELECT status, COUNT(*) AS count FROM tasks GROUP BY status")
@@ -495,6 +565,22 @@ async def api_run_agent(name: str) -> dict[str, Any]:
 
 
 
+
+
+@app.get("/api/backups")
+def api_backups() -> dict[str, Any]:
+    return {"backup_dir": str(BACKUP_DIR), "backups": list_backups(), "key_configured": bool(BACKUP_KEY)}
+
+
+@app.post("/api/backup")
+def api_create_backup(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    passphrase = payload.get("passphrase")
+    if passphrase is not None:
+        passphrase = str(passphrase)
+    return {"ok": True, "backup": create_backup_archive(passphrase=passphrase)}
+
+
 @app.get("/api/codex/context")
 def api_codex_context(refresh: bool = False) -> dict[str, Any]:
     text = write_codex_context() if refresh or not CODEX_CONTEXT_PATH.exists() else CODEX_CONTEXT_PATH.read_text(encoding="utf-8", errors="replace")
@@ -628,6 +714,13 @@ def index() -> str:
       </section>
 
       <section class="side"><h2>Herramientas</h2><div id="tools"></div></section>
+      <section class="side">
+        <h2>Backups</h2>
+        <p class="muted" id="backupDir">-</p>
+        <label>Clave backup opcional<input id="backupPassphrase" type="password" placeholder="usa SEGURAI_BACKUP_KEY si lo dejas vacio" /></label>
+        <div class="toolbar"><button class="secondary" onclick="createBackup()">Crear backup</button></div>
+        <ul id="backupList"></ul>
+      </section>
       <section class="wide"><h2>Observaciones recientes</h2><ul id="observationList"></ul></section>
       <section class="side"><h2>Estado</h2><pre id="status"></pre></section>
       <section class="full">
@@ -658,8 +751,8 @@ function showNotice(message, kind = 'ok') {
 }
 function isoFromLocal(value) { return value ? new Date(value).toISOString() : null; }
 async function loadAll() {
-  const [status, observations, tasks, logs, tools, agents, codex, notes] = await Promise.all([
-    requestJSON('/api/status'), requestJSON('/api/observations'), requestJSON('/api/tasks'), requestJSON('/api/logs'), requestJSON('/api/tools'), requestJSON('/api/agents'), requestJSON('/api/codex/context'), requestJSON('/api/codex/notes')
+  const [status, observations, tasks, logs, tools, agents, codex, notes, backups] = await Promise.all([
+    requestJSON('/api/status'), requestJSON('/api/observations'), requestJSON('/api/tasks'), requestJSON('/api/logs'), requestJSON('/api/tools'), requestJSON('/api/agents'), requestJSON('/api/codex/context'), requestJSON('/api/codex/notes'), requestJSON('/api/backups')
   ]);
   document.getElementById('memories').textContent = status.memories;
   document.getElementById('observations').textContent = status.observations;
@@ -671,6 +764,8 @@ async function loadAll() {
   document.getElementById('codexPath').textContent = codex.path;
   document.getElementById('codexContext').textContent = codex.text;
   document.getElementById('codexNotes').value = notes.text || '';
+  document.getElementById('backupDir').textContent = backups.backup_dir + (backups.key_configured ? ' · clave configurada' : ' · sin clave configurada');
+  document.getElementById('backupList').innerHTML = backups.backups.length ? backups.backups.map(b => `<li><strong>${html(b.name)}</strong><br><span class="muted">${html(b.bytes)} bytes · ${html(b.path)}</span></li>`).join('') : '<li>Sin backups.</li>';
   renderTasks(tasks);
   renderAgents(agents.agents || []);
   document.getElementById('observationList').innerHTML = observations.length ? observations.map(o => `<li><strong>${html(o.source)}</strong> <span class="muted">${html(o.created_at)}</span><br>${html(o.summary)}</li>`).join('') : '<li>Sin observaciones todavia.</li>';
@@ -717,6 +812,7 @@ async function deleteTask(id) { if (confirm('Eliminar tarea #' + id + '?')) { tr
 async function updateAgent(name, payload) { try { await requestJSON(`/api/agents/${encodeURIComponent(name)}`, {method: 'PATCH', body: JSON.stringify(payload)}); showNotice('Agente actualizado'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
 async function runAgent(name) { try { const result = await requestJSON(`/api/agents/${encodeURIComponent(name)}/run`, {method: 'POST'}); showNotice(result.message, result.ok ? 'ok' : 'error'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
 async function refreshCodexContext() { try { await requestJSON('/api/codex/context/refresh', {method: 'POST'}); showNotice('Contexto Codex actualizado'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
+async function createBackup() { try { const pass = document.getElementById('backupPassphrase').value; const result = await requestJSON('/api/backup', {method: 'POST', body: JSON.stringify({passphrase: pass || null})}); showNotice('Backup creado: ' + result.backup.path); document.getElementById('backupPassphrase').value = ''; await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
 async function saveCodexNotes() { try { await requestJSON('/api/codex/notes', {method: 'POST', body: JSON.stringify({text: document.getElementById('codexNotes').value})}); showNotice('Notas Codex guardadas'); await loadAll(); } catch (err) { showNotice(err.message, 'error'); } }
 loadAll().catch(err => { showNotice(err.message, 'error'); });
 </script>

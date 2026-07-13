@@ -3,7 +3,7 @@ FROM ${BUILD_FROM}
 
 SHELL ["/bin/sh", "-o", "pipefail", "-c"]
 
-RUN apk add --no-cache git openssh-client
+RUN apk add --no-cache git openssh-client openssl
 
 WORKDIR /app
 COPY rootfs /

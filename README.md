@@ -357,6 +357,32 @@ El agente diferencia prediccion/modelo de medicion observada y solo recomienda p
 
 
 
+
+### Backup cifrado de memoria
+
+SegurAI puede crear un backup de reconstruccion que incluye memoria SQLite, tareas, observaciones, configuracion de agentes, agentes vivos, contexto Codex, notas y logs. Desde la UI usa **Backups** o llama `POST /api/backup`.
+
+Config recomendada:
+
+```yaml
+backup_key: "una-clave-larga-privada"
+```
+
+El backup se guarda en:
+
+```text
+/config/data/backups/segurai-backup-YYYYMMDDTHHMMSSZ.tar.gz.enc
+```
+
+Se cifra con OpenSSL AES-256-CBC + PBKDF2. Para descifrar:
+
+```bash
+openssl enc -d -aes-256-cbc -pbkdf2 -in segurai-backup-XXXX.tar.gz.enc -out segurai-backup.tar.gz -pass pass:TU_CLAVE
+tar -tzf segurai-backup.tar.gz
+```
+
+Ese `.enc` se puede copiar al workspace Git y subirlo a GitHub como backup privado, siempre que la clave no se suba al repositorio.
+
 ### Contexto para Codex interactivo
 
 El panel web genera un contexto de mantenimiento para una sesion Codex/tmux externa o futura:
